@@ -94,10 +94,10 @@ resize();
 let state = 'menu'; // menu, playing, gameover
 let score = 0, lives = 3, level = 1, highScore = +localStorage.getItem('si_hi') || 0;
 let playerX = W / 2, playerBullets = [], invaderBullets = [];
-let invaders = [], invaderDir = 1, invaderSpeed = 1, invaderDrop = 0;
+let invaders = [], invaderDir = 1, invaderMoveFrames = 0, invaderMoveInterval = 18;
 let ufo = null, ufoTimer = 0;
 let particles = [], shakeTimer = 0, shakeAmt = 0;
-let invaderShootTimer = 0, invaderMoveTimer = 0;
+let invaderShootTimer = 0;
 let playerInvincible = 0;
 let stars = [];
 for (let i = 0; i < 80; i++) stars.push({ x: Math.random()*W, y: Math.random()*H, s: Math.random()*1.5+0.5, b: Math.random() });
@@ -151,7 +151,7 @@ function drawCRT() {
 function createInvaders() {
   invaders = [];
   const rows = Math.min(2 + Math.floor(level / 2), 5);
-  const cols = Math.min(6 + Math.floor(level / 3), 10);
+  const cols = Math.min(4 + Math.floor(level / 3), 8);
   const step = 36;
   const ox = (W - cols * step) / 2;
   const oy = 80;
@@ -164,9 +164,9 @@ function createInvaders() {
       });
     }
   invaderDir = 1;
-  invaderSpeed = 1 + (level - 1) * 0.3;
-  invaderDrop = 0;
-  invaderMoveTimer = 0;
+  invaderMoveFrames = 0;
+  // Base interval: 18 frames at level 1, decreases with level (min 3)
+  invaderMoveInterval = Math.max(3, 18 - (level - 1) * 2);
 }
 
 // ─── SHOOTING ────────────────────────────────────────────
@@ -220,13 +220,16 @@ function update() {
     invaderBullets[i].y += bulletSpeed;
     if (invaderBullets[i].y > H) invaderBullets.splice(i, 1);
   }
-  // Invader movement
-  const INVADER_STEP = 8;
-  invaderMoveTimer += invaderSpeed;
-  if (invaderMoveTimer >= 1) {
-    invaderMoveTimer = 0;
-    const alive = invaders.filter(i => i.alive);
+  // Invader movement — frame throttle, speeds up as invaders die
+  invaderMoveFrames++;
+  const alive = invaders.filter(i => i.alive);
+  // Dynamic interval: fewer alive = faster (min 2 frames)
+  const aliveRatio = alive.length / invaders.length;
+  const currentInterval = Math.max(2, Math.floor(invaderMoveInterval * (0.5 + aliveRatio * 0.5)));
+  if (invaderMoveFrames >= currentInterval) {
+    invaderMoveFrames = 0;
     let hitEdge = false;
+    const INVADER_STEP = 8;
     for (const inv of alive) {
       if (inv.x + INVADER_STEP * invaderDir > W - 10 || inv.x + INVADER_STEP * invaderDir < 10) {
         hitEdge = true; break;
