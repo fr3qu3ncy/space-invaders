@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Space Invaders</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;touch-action:none;user-select:none;-webkit-user-select:none}
+canvas{display:block;width:100%;height:100%}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ─── CONFIG ───────────────────────────────────────────────
+const W = 440, H = 720;
+const FONT = '"Press Start 2P", monospace';
+const COLORS = {
+  bg: '#0a0a1a', player: '#00ff88', bullet: '#00ffff',
+  inv1: '#ff44ff', inv2: '#ff8844', inv3: '#44ffff',
+  ufo: '#ffff00', shield: '#00ff88', text: '#ffffff'
+};
+const INVADER_COLORS = [COLORS.inv3, COLORS.inv2, COLORS.inv1];
+
+// ─── SPRITE BITMAPS (8x8 grids, 1=pixel) ─────────────────
+const SPRITES = {
+  invader1: [ // squid
+    [0,0,0,1,1,0,0,0],[0,0,1,1,1,1,0,0],[0,1,1,1,1,1,1,0],
+    [1,1,0,1,1,0,1,1],[1,1,1,1,1,1,1,1],[0,0,1,0,0,1,0,0],
+    [0,1,0,1,1,0,1,0],[1,0,1,0,0,1,0,1]
+  ],
+  invader2: [ // crab
+    [0,0,1,0,0,1,0,0],[0,1,1,0,0,1,1,0],[1,1,1,1,1,1,1,1],
+    [1,1,1,0,0,1,1,1],[1,1,1,1,1,1,1,1],[0,0,0,1,1,0,0,0],
+    [0,1,1,1,1,1,1,0],[1,0,1,0,0,1,0,1]
+  ],
+  invader3: [ // octopus
+    [0,0,1,1,1,1,0,0],[0,1,1,1,1,1,1,0],[1,1,1,1,1,1,1,1],
+    [1,1,0,1,1,0,1,1],[1,1,1,1,1,1,1,1],[0,0,0,1,0,1,0,0],
+    [0,1,0,1,1,0,1,0],[0,0,1,0,0,1,0,0]
+  ],
+  player: [
+    [0,0,0,0,1,0,0,0],[0,0,0,1,1,1,0,0],[0,0,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,0],[1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1],
+    [1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1]
+  ],
+  ufo: [
+    [0,0,0,0,0,0,0,0],[0,0,0,1,1,0,0,0],[0,0,1,1,1,1,0,0],
+    [0,1,1,1,1,1,1,0],[1,1,0,1,1,0,1,1],[1,1,1,1,1,1,1,1],
+    [0,0,1,0,0,1,0,0],[0,1,0,0,0,0,1,0]
+  ]
+};
+
+// ─── AUDIO ENGINE (Web Audio API synth) ──────────────────
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playTone(freq, dur, type='square', vol=0.08) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = type; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  o.connect(g); g.connect(audioCtx.destination);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+const SFX = {
+  shoot: () => playTone(880, 0.08, 'square', 0.06),
+  hit: () => { playTone(220, 0.15, 'sawtooth', 0.1); playTone(110, 0.2, 'square', 0.06); },
+  explode: () => { playTone(80, 0.3, 'sawtooth', 0.12); playTone(40, 0.4, 'square', 0.08); },
+  ufo: () => playTone(600, 0.5, 'sine', 0.04),
+  levelUp: () => { playTone(523, 0.12); setTimeout(()=>playTone(659,0.12),120); setTimeout(()=>playTone(784,0.18),240); }
+};
+
+// ─── CANVAS SETUP ────────────────────────────────────────
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let scale = 1;
+function resize() {
+  const r = Math.min(window.innerWidth / W, window.innerHeight / H);
+  canvas.width = W; canvas.height = H;
+  scale = r;
+  canvas.style.width = (W * r) + 'px';
+  canvas.style.height = (H * r) + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── GAME STATE ──────────────────────────────────────────
+let state = 'menu'; // menu, playing, gameover
+let score = 0, lives = 3, level = 1, highScore = +localStorage.getItem('si_hi') || 0;
+let playerX = W / 2, playerBullets = [], invaderBullets = [];
+let invaders = [], invaderDir = 1, invaderSpeed = 1, invaderDrop = 0;
+let ufo = null, ufoTimer = 0;
+let particles = [], shakeTimer = 0, shakeAmt = 0;
+let invaderShootTimer = 0, invaderMoveTimer = 0;
+let playerInvincible = 0;
+let stars = [];
+for (let i = 0; i < 80; i++) stars.push({ x: Math.random()*W, y: Math.random()*H, s: Math.random()*1.5+0.5, b: Math.random() });
+
+// ─── PARTICLES ───────────────────────────────────────────
+function spawnParticles(x, y, color, n=12) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = Math.random() * 3 + 1;
+    particles.push({ x, y, vx: Math.cos(a)*sp, vy: Math.sin(a)*sp, life: 1, color, size: Math.random()*3+1 });
+  }
+}
+function updateParticles() {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.life -= 0.03;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ─── DRAWING HELPERS ─────────────────────────────────────
+function drawSprite(sprite, x, y, color, pixelSize=5) {
+  ctx.fillStyle = color;
+  for (let r = 0; r < sprite.length; r++)
+    for (let c = 0; c < sprite[r].length; c++)
+      if (sprite[r][c]) ctx.fillRect(x + c*pixelSize, y + r*pixelSize, pixelSize, pixelSize);
+}
+function drawText(text, x, y, size=16, color='#fff', align='center') {
+  ctx.fillStyle = color; ctx.font = `${size}px ${FONT}`; ctx.textAlign = align;
+  ctx.fillText(text, x, y);
+}
+function drawCRT() {
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.08)';
+  for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+  // Vignette
+  const grad = ctx.createRadialGradient(W/2, H/2, W*0.3, W/2, H/2, W*0.8);
+  grad.addColorStop(0, 'rgba(0,0,0,0)'); grad.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, H);
+}
+
+// ─── INVADER MANAGEMENT ──────────────────────────────────
+function createInvaders() {
+  invaders = [];
+  const rows = Math.min(2 + Math.floor(level / 2), 5);
+  const cols = Math.min(6 + Math.floor(level / 3), 10);
+  const step = 36;
+  const ox = (W - cols * step) / 2;
+  const oy = 80;
+  for (let r = 0; r < rows; r++)
+    for (let c = 0; c < cols; c++) {
+      const type = r < 1 ? 0 : r < 3 ? 1 : 2;
+      invaders.push({
+        x: ox + c * step, y: oy + r * step,
+        type, alive: true, w: 40, h: 40
+      });
+    }
+  invaderDir = 1;
+  invaderSpeed = 1 + (level - 1) * 0.3;
+  invaderDrop = 0;
+  invaderMoveTimer = 0;
+}
+
+// ─── SHOOTING ────────────────────────────────────────────
+function playerShoot() {
+  if (state !== 'playing') return;
+  if (playerBullets.length >= 2) return;
+  playerBullets.push({ x: playerX, y: H - 80, w: 4, h: 12 });
+  SFX.shoot();
+}
+function invaderShoot() {
+  const alive = invaders.filter(i => i.alive);
+  if (!alive.length) return;
+  const s = alive[Math.floor(Math.random() * alive.length)];
+  invaderBullets.push({ x: s.x + 20, y: s.y + 40, w: 3, h: 10 });
+}
+
+// ─── LEVEL MANAGEMENT ────────────────────────────────────
+function nextLevel() {
+  level++;
+  playerBullets = []; invaderBullets = [];
+  createInvaders();
+  ufo = null; ufoTimer = 0;
+  SFX.levelUp();
+}
+function startGame() {
+  initAudio();
+  score = 0; lives = 3; level = 1;
+  playerX = W / 2; playerInvincible = 0;
+  playerBullets = []; invaderBullets = []; particles = [];
+  createInvaders();
+  ufo = null; ufoTimer = 0;
+  state = 'playing';
+}
+function gameOver() {
+  state = 'gameover';
+  if (score > highScore) { highScore = score; localStorage.setItem('si_hi', highScore); }
+  SFX.explode();
+}
+
+// ─── UPDATE ──────────────────────────────────────────────
+function update() {
+  if (state !== 'playing') return;
+  // Player bullets
+  for (let i = playerBullets.length - 1; i >= 0; i--) {
+    playerBullets[i].y -= 8;
+    if (playerBullets[i].y < 0) playerBullets.splice(i, 1);
+  }
+  // Invader bullets
+  const bulletSpeed = 3 + level * 0.3;
+  for (let i = invaderBullets.length - 1; i >= 0; i--) {
+    invaderBullets[i].y += bulletSpeed;
+    if (invaderBullets[i].y > H) invaderBullets.splice(i, 1);
+  }
+  // Invader movement
+  const INVADER_STEP = 8;
+  invaderMoveTimer += invaderSpeed;
+  if (invaderMoveTimer >= 1) {
+    invaderMoveTimer = 0;
+    const alive = invaders.filter(i => i.alive);
+    let hitEdge = false;
+    for (const inv of alive) {
+      if (inv.x + INVADER_STEP * invaderDir > W - 10 || inv.x + INVADER_STEP * invaderDir < 10) {
+        hitEdge = true; break;
+      }
+    }
+    if (hitEdge) {
+      invaderDir *= -1;
+      for (const inv of alive) inv.y += 12;
+    } else {
+      for (const inv of alive) inv.x += INVADER_STEP * invaderDir;
+    }
+    // Invader shooting
+    const shootRate = Math.max(0.02, 0.08 - level * 0.008);
+    if (Math.random() < shootRate && invaderBullets.length < 3 + level) invaderShoot();
+  }
+  // UFO
+  ufoTimer++;
+  if (!ufo && ufoTimer > 600 + Math.random() * 400) {
+    ufo = { x: -40, y: 50, w: 40, dir: 1 };
+    SFX.ufo();
+  }
+  if (ufo) {
+    ufo.x += 2 * ufo.dir;
+    if (ufo.x > W + 40) ufo = null;
+  }
+  // Collision: player bullets vs invaders
+  for (let i = playerBullets.length - 1; i >= 0; i--) {
+    const b = playerBullets[i];
+    let hit = false;
+    for (const inv of invaders) {
+      if (!inv.alive) continue;
+      if (b.x < inv.x + inv.w && b.x + b.w > inv.x && b.y < inv.y + inv.h && b.y + b.h > inv.y) {
+        inv.alive = false; hit = true;
+        const pts = [30, 20, 10][inv.type] * level;
+        score += pts;
+        spawnParticles(inv.x + 20, inv.y + 20, INVADER_COLORS[inv.type], 15);
+        SFX.hit(); shakeTimer = 6; shakeAmt = 3;
+        break;
+      }
+    }
+    // Player bullet vs UFO
+    if (!hit && ufo && b.x < ufo.x + ufo.w && b.x + b.w > ufo.x && b.y < ufo.y + 32 && b.y + b.h > ufo.y) {
+      const pts = [50, 100, 150, 200, 300][Math.floor(Math.random()*5)];
+      score += pts; hit = true;
+      spawnParticles(ufo.x + 20, ufo.y + 16, COLORS.ufo, 20);
+      SFX.explode(); ufo = null;
+    }
+    if (hit) playerBullets.splice(i, 1);
+  }
+  // Collision: invader bullets vs player
+  if (playerInvincible > 0) playerInvincible--;
+  else {
+    for (let i = invaderBullets.length - 1; i >= 0; i--) {
+      const b = invaderBullets[i];
+      if (b.x < playerX + 20 && b.x + b.w > playerX - 20 && b.y < H - 60 && b.y + b.h > H - 80) {
+        lives--; invaderBullets.splice(i, 1);
+        spawnParticles(playerX, H - 70, COLORS.player, 20);
+        SFX.explode(); shakeTimer = 10; shakeAmt = 5;
+        playerInvincible = 90;
+        if (lives <= 0) { gameOver(); return; }
+      }
+    }
+  }
+  // Invaders reached bottom?
+  for (const inv of invaders) {
+    if (inv.alive && inv.y + inv.h > H - 100) { gameOver(); return; }
+  }
+  // All invaders dead?
+  if (!invaders.some(i => i.alive)) nextLevel();
+  // Particles
+  updateParticles();
+  if (shakeTimer > 0) shakeTimer--;
+  // Stars twinkle
+  for (const s of stars) s.b += (Math.random() - 0.5) * 0.1;
+}
+
+// ─── RENDER ──────────────────────────────────────────────
+function render() {
+  ctx.save();
+  // Screen shake
+  if (shakeTimer > 0) {
+    ctx.translate((Math.random()-0.5)*shakeAmt*2, (Math.random()-0.5)*shakeAmt*2);
+  }
+  // Background
+  ctx.fillStyle = COLORS.bg; ctx.fillRect(0, 0, W, H);
+  // Stars
+  for (const s of stars) {
+    ctx.globalAlpha = Math.max(0.2, Math.min(1, s.b));
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(s.x, s.y, s.s, s.s);
+  }
+  ctx.globalAlpha = 1;
+
+  if (state === 'menu') {
+    // Title
+    ctx.shadowColor = '#00ff88'; ctx.shadowBlur = 20;
+    drawText('SPACE', W/2, 180, 36, '#00ff88');
+    drawText('INVADERS', W/2, 230, 36, '#ff44ff');
+    ctx.shadowBlur = 0;
+    // Decorative invaders
+    const t = Date.now() / 1000;
+    drawSprite(SPRITES.invader1, W/2 - 60, 320, COLORS.inv1, 6);
+    drawSprite(SPRITES.invader2, W/2, 320, COLORS.inv2, 6);
+    drawSprite(SPRITES.invader3, W/2 + 60, 320, COLORS.inv3, 6);
+    // High score
+    drawText(`HIGH SCORE: ${highScore}`, W/2, 410, 12, '#ffff00');
+    // Start prompt
+    if (Math.floor(t * 2) % 2) drawText('TAP TO START', W/2, 500, 16, '#00ffff');
+    drawText(`LEVEL 1`, W/2, 540, 10, '#888');
+    drawText(`3 LIVES`, W/2, 565, 10, '#888');
+  }
+  else if (state === 'playing') {
+    // HUD
+    drawText(`SCORE: ${score}`, W/2, 25, 12, COLORS.text, 'center');
+    drawText(`LVL ${level}`, W/2, 45, 10, '#aaa', 'center');
+    // Lives
+    for (let i = 0; i < lives; i++) drawSprite(SPRITES.player, 15 + i * 25, H - 25, COLORS.player, 3);
+    // Player
+    if (playerInvincible <= 0 || Math.floor(Date.now()/100) % 2)
+      drawSprite(SPRITES.player, playerX - 20, H - 80, COLORS.player, 5);
+    // Invaders
+    for (const inv of invaders) {
+      if (!inv.alive) continue;
+      const bob = Math.sin(Date.now()/300 + inv.x/30) * 2;
+      drawSprite(SPRITES['invader'+(inv.type+1)], inv.x, inv.y + bob, INVADER_COLORS[inv.type], 5);
+    }
+    // UFO
+    if (ufo) drawSprite(SPRITES.ufo, ufo.x, ufo.y, COLORS.ufo, 5);
+    // Player bullets
+    ctx.fillStyle = COLORS.bullet;
+    for (const b of playerBullets) ctx.fillRect(b.x - b.w/2, b.y, b.w, b.h);
+    // Invader bullets
+    ctx.fillStyle = '#ff4444';
+    for (const b of invaderBullets) {
+      ctx.fillRect(b.x - b.w/2, b.y, b.w, b.h);
+      ctx.fillRect(b.x - b.w, b.y + 2, b.w*2, 2);
+    }
+    // Particles
+    drawParticles();
+    // Ground line
+    ctx.strokeStyle = '#00ff8844'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, H - 95); ctx.lineTo(W, H - 95); ctx.stroke();
+  }
+  else if (state === 'gameover') {
+    ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 15;
+    drawText('GAME OVER', W/2, 220, 28, '#ff4444');
+    ctx.shadowBlur = 0;
+    drawText(`SCORE: ${score}`, W/2, 300, 18, '#fff');
+    drawText(`LEVEL: ${level}`, W/2, 335, 14, '#aaa');
+    if (score >= highScore && score > 0) drawText('NEW HIGH SCORE!', W/2, 380, 14, '#ffff00');
+    else drawText(`HIGH: ${highScore}`, W/2, 380, 12, '#888');
+    const t = Date.now()/1000;
+    if (Math.floor(t*2)%2) drawText('TAP TO RETRY', W/2, 460, 14, '#00ffff');
+  }
+  ctx.restore();
+  // CRT overlay (always on top)
+  drawCRT();
+}
+
+// ─── INPUT ───────────────────────────────────────────────
+let touchLeftX = null, touchRightX = null;
+const MOVE_DEADZONE = 5;
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (state === 'menu') { startGame(); return; }
+  if (state === 'gameover') { startGame(); return; }
+  for (const t of e.changedTouches) {
+    const rect = canvas.getBoundingClientRect();
+    const tx = (t.clientX - rect.left) / scale;
+    if (tx < W / 2) touchLeftX = tx;
+    else playerShoot();
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (state !== 'playing') return;
+  for (const t of e.changedTouches) {
+    const rect = canvas.getBoundingClientRect();
+    const tx = (t.clientX - rect.left) / scale;
+    if (tx < W / 2 && touchLeftX !== null) {
+      const dx = tx - touchLeftX;
+      playerX += dx * 1.5;
+      playerX = Math.max(20, Math.min(W - 20, playerX));
+      touchLeftX = tx;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const rect = canvas.getBoundingClientRect();
+    const tx = (t.clientX - rect.left) / scale;
+    if (tx < W / 2) touchLeftX = null;
+  }
+}, { passive: false });
+
+// Keyboard fallback
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') {
+    if (state === 'menu' || state === 'gameover') startGame();
+    else playerShoot();
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+function handleKeys() {
+  if (state !== 'playing') return;
+  if (keys['ArrowLeft']) playerX -= 5;
+  if (keys['ArrowRight']) playerX += 5;
+  playerX = Math.max(20, Math.min(W - 20, playerX));
+}
+
+// Click for desktop testing
+canvas.addEventListener('click', () => {
+  if (state === 'menu' || state === 'gameover') startGame();
+});
+
+// ─── GAME LOOP ───────────────────────────────────────────
+function loop() {
+  handleKeys();
+  update();
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
