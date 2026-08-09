@@ -151,7 +151,7 @@ function drawCRT() {
 function createInvaders() {
   invaders = [];
   const rows = Math.min(2 + Math.floor(level / 2), 5);
-  const cols = Math.min(4 + Math.floor(level / 3), 8);
+  const cols = Math.min(3 + Math.floor(level / 3), 7);
   const step = 36;
   const ox = (W - cols * step) / 2;
   const oy = 80;
@@ -165,8 +165,8 @@ function createInvaders() {
     }
   invaderDir = 1;
   invaderMoveFrames = 0;
-  // Base interval: 22 frames at level 1, decreases 1.5 per level (min 5)
-  invaderMoveInterval = Math.max(5, 22 - (level - 1) * 1.5);
+  // Base interval: 14 frames at level 1, decreases 0.7 per level (min 5)
+  invaderMoveInterval = Math.max(5, 14 - (level - 1) * 0.7);
 }
 
 // ─── SHOOTING ────────────────────────────────────────────
@@ -223,9 +223,9 @@ function update() {
   // Invader movement — frame throttle, speeds up as invaders die
   invaderMoveFrames++;
   const alive = invaders.filter(i => i.alive);
-  // Dynamic interval: fewer alive = faster (min 3 frames)
+  // Dynamic interval: fewer alive = slightly faster (min 4 frames)
   const aliveRatio = alive.length / invaders.length;
-  const currentInterval = Math.max(3, Math.floor(invaderMoveInterval * (0.7 + aliveRatio * 0.3)));
+  const currentInterval = Math.max(4, Math.floor(invaderMoveInterval * (0.85 + aliveRatio * 0.15)));
   if (invaderMoveFrames >= currentInterval) {
     invaderMoveFrames = 0;
     let hitEdge = false;
