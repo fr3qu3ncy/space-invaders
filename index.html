@@ -212,7 +212,7 @@ const GAME = {
   playerSpeed: 5,
   bulletSpeed: 8,
   invaderBaseSpeed: 0.4,
-  invaderDrop: 18,
+  invaderDrop: 12,
   invaderShootChance: 0.002,
   bulletHitRadius: 8,
   lives: 3,
@@ -437,26 +437,28 @@ function drawParticles() {
 // ── Level setup ──
 function setupLevel() {
   const rows = Math.min(5, 3 + Math.floor(state.level / 3));
-  const cols = Math.min(11, 8 + Math.floor(state.level / 2));
+  const cols = Math.min(9, 6 + Math.floor(state.level / 2));
   state.invaders = [];
   state.bullets = [];
   state.enemyBullets = [];
   state.invaderDir = 1;
   state.invaderSpeed = GAME.invaderBaseSpeed + (state.level - 1) * 0.08;
+  state.invaderMoveCounter = 0;
   state.ufo = null;
   state.ufoTimer = 600 + Math.random() * 600;
 
   const invaderW = 8 * pixelSize;
   const invaderH = 8 * pixelSize;
-  const totalW = cols * (invaderW + 16);
-  const startX = (W - totalW) / 2 + 8;
+  const gap = Math.max(12, W * 0.025);
+  const totalW = cols * (invaderW + gap);
+  const startX = (W - totalW) / 2 + 10;
   const startY = 80;
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const spriteIdx = r < 1 ? 2 : r < 3 ? 1 : 0;
       state.invaders.push({
-        x: startX + c * (invaderW + 16),
+        x: startX + c * (invaderW + gap),
         y: startY + r * (invaderH + 14),
         w: invaderW,
         h: invaderH,
@@ -598,25 +600,34 @@ function update() {
     return;
   }
 
-  // Speed up as fewer invaders remain
-  const speedMult = 1 + (state.invaders.length - aliveInvaders.length) / state.invaders.length * 2;
-  const moveAmount = state.invaderSpeed * speedMult * state.invaderDir;
+  // Frame throttle: invaders only move every N frames
+  const moveInterval = Math.max(4, 12 - state.level);
+  state.invaderMoveCounter++;
+  if (state.invaderMoveCounter < moveInterval) {
+    // Still update particles, UFO, etc. below
+  } else {
+    state.invaderMoveCounter = 0;
 
-  let needDrop = false;
-  for (const inv of aliveInvaders) {
-    inv.x += moveAmount;
-    if (inv.x <= 4 || inv.x + inv.w >= W - 4) needDrop = true;
-  }
+    // Speed up as fewer invaders remain
+    const speedMult = 1 + (state.invaders.length - aliveInvaders.length) / state.invaders.length * 1.5;
+    const moveAmount = state.invaderSpeed * speedMult * state.invaderDir;
 
-  if (needDrop) {
-    state.invaderDir *= -1;
+    let needDrop = false;
     for (const inv of aliveInvaders) {
-      inv.y += GAME.invaderDrop;
-      // Check if invaders reached player level
-      if (inv.y + inv.h >= state.player.y) {
-        state.lives = 0;
-        gameOver();
-        return;
+      inv.x += moveAmount;
+      if (inv.x <= 4 || inv.x + inv.w >= W - 4) needDrop = true;
+    }
+
+    if (needDrop) {
+      state.invaderDir *= -1;
+      for (const inv of aliveInvaders) {
+        inv.y += GAME.invaderDrop;
+        // Check if invaders reached player level
+        if (inv.y + inv.h >= state.player.y) {
+          state.lives = 0;
+          gameOver();
+          return;
+        }
       }
     }
   }
