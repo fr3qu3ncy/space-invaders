@@ -96,6 +96,7 @@ let score = 0, lives = 3, level = 1, highScore = +localStorage.getItem('si_hi') 
 let playerX = W / 2, playerBullets = [], invaderBullets = [];
 let invaders = [], invaderDir = 1, invaderMoveFrames = 0, invaderMoveInterval = 18;
 let ufo = null, ufoTimer = 0;
+let shields = []; // persistent across levels — only reset on new game
 let particles = [], shakeTimer = 0, shakeAmt = 0;
 let invaderShootTimer = 0;
 let playerInvincible = 0;
@@ -169,6 +170,51 @@ function createInvaders() {
   invaderMoveInterval = Math.max(5, 14 - (level - 1) * 0.7);
 }
 
+// ─── SHIELDS (protective arches, persist across levels) ─
+const SHIELD_CELL = 8;
+const SHIELD_TOP = 560; // bottom at 640, right above the player
+const BUNKER_SHAPE = [
+  [0,0,1,1,1,1,1,1,1,0,0],
+  [0,1,1,1,1,1,1,1,1,1,0],
+  [1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,1,1,1,1,1,1,1],
+  [1,1,1,1,0,0,0,1,1,1,1],
+  [1,1,1,0,0,0,0,0,1,1,1]
+];
+function createShields() {
+  shields = [];
+  const bw = BUNKER_SHAPE[0].length * SHIELD_CELL; // 88px
+  const positions = [44, (W - bw) / 2, W - 44 - bw];
+  for (const px of positions)
+    for (let r = 0; r < BUNKER_SHAPE.length; r++)
+      for (let c = 0; c < BUNKER_SHAPE[r].length; c++)
+        if (BUNKER_SHAPE[r][c])
+          shields.push({ x: px + c * SHIELD_CELL, y: SHIELD_TOP + r * SHIELD_CELL, alive: true });
+}
+function bulletHitsShield(b) {
+  for (const s of shields) {
+    if (!s.alive) continue;
+    if (b.x < s.x + SHIELD_CELL && b.x + b.w > s.x && b.y < s.y + SHIELD_CELL && b.y + b.h > s.y) {
+      s.alive = false;
+      spawnParticles(s.x + SHIELD_CELL/2, s.y + SHIELD_CELL/2, COLORS.shield, 5);
+      return true;
+    }
+  }
+  return false;
+}
+function destroyShieldsUnderRect(x, y, w, h) {
+  for (const s of shields) {
+    if (s.alive && x < s.x + SHIELD_CELL && x + w > s.x && y < s.y + SHIELD_CELL && y + h > s.y) {
+      s.alive = false;
+      spawnParticles(s.x + SHIELD_CELL/2, s.y + SHIELD_CELL/2, COLORS.shield, 5);
+    }
+  }
+}
+
 // ─── SHOOTING ────────────────────────────────────────────
 function playerShoot() {
   if (state !== 'playing') return;
@@ -189,6 +235,7 @@ function nextLevel() {
   playerBullets = []; invaderBullets = [];
   createInvaders();
   ufo = null; ufoTimer = 0;
+  // shields intentionally NOT reset — damage persists across levels
   SFX.levelUp();
 }
 function startGame() {
@@ -197,6 +244,7 @@ function startGame() {
   playerX = W / 2; playerInvincible = 0;
   playerBullets = []; invaderBullets = []; particles = [];
   createInvaders();
+  createShields();
   ufo = null; ufoTimer = 0;
   state = 'playing';
 }
@@ -241,6 +289,8 @@ function update() {
     } else {
       for (const inv of alive) inv.x += INVADER_STEP * invaderDir;
     }
+    // Invaders chew through any shield blocks they touch
+    for (const inv of alive) destroyShieldsUnderRect(inv.x, inv.y, inv.w, inv.h);
     // Invader shooting
     const shootRate = Math.max(0.02, 0.08 - level * 0.008);
     if (Math.random() < shootRate && invaderBullets.length < 3 + level) invaderShoot();
@@ -254,6 +304,13 @@ function update() {
   if (ufo) {
     ufo.x += 2 * ufo.dir;
     if (ufo.x > W + 40) ufo = null;
+  }
+  // Collision: player bullets vs shields (consumes bullet, chews one block)
+  for (let i = playerBullets.length - 1; i >= 0; i--) {
+    if (bulletHitsShield(playerBullets[i])) {
+      playerBullets.splice(i, 1);
+      SFX.hit(); shakeTimer = 3; shakeAmt = 1;
+    }
   }
   // Collision: player bullets vs invaders
   for (let i = playerBullets.length - 1; i >= 0; i--) {
@@ -278,6 +335,13 @@ function update() {
       SFX.explode(); ufo = null;
     }
     if (hit) playerBullets.splice(i, 1);
+  }
+  // Collision: invader bullets vs shields
+  for (let i = invaderBullets.length - 1; i >= 0; i--) {
+    if (bulletHitsShield(invaderBullets[i])) {
+      invaderBullets.splice(i, 1);
+      SFX.hit(); shakeTimer = 3; shakeAmt = 1;
+    }
   }
   // Collision: invader bullets vs player
   if (playerInvincible > 0) playerInvincible--;
@@ -345,11 +409,16 @@ function render() {
     // HUD
     drawText(`SCORE: ${score}`, W/2, 25, 12, COLORS.text, 'center');
     drawText(`LVL ${level}`, W/2, 45, 10, '#aaa', 'center');
-    // Lives
-    for (let i = 0; i < lives; i++) drawSprite(SPRITES.player, 15 + i * 25, H - 25, COLORS.player, 3);
+    // Lives (bigger sprites for visibility)
+    for (let i = 0; i < lives; i++) drawSprite(SPRITES.player, 15 + i * 48, H - 40, COLORS.player, 5);
     // Player
     if (playerInvincible <= 0 || Math.floor(Date.now()/100) % 2)
       drawSprite(SPRITES.player, playerX - 20, H - 80, COLORS.player, 5);
+    // Shields (protective arches)
+    ctx.fillStyle = COLORS.shield;
+    for (const s of shields) if (s.alive) ctx.fillRect(s.x, s.y, SHIELD_CELL, SHIELD_CELL);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    for (const s of shields) if (s.alive) ctx.fillRect(s.x, s.y + SHIELD_CELL - 2, SHIELD_CELL, 2);
     // Invaders
     for (const inv of invaders) {
       if (!inv.alive) continue;
