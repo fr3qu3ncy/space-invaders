@@ -168,7 +168,8 @@
 <div class="overlay" id="menuScreen">
   <div class="title">SPACE<br>INVADERS</div>
   <div class="subtitle">
-    SWIPE TO MOVE &bull; TAP TO SHOOT<br>
+    SWIPE LEFT SIDE TO MOVE<br>
+    TAP RIGHT SIDE TO SHOOT<br>
     DESTROY ALL INVADERS
   </div>
   <button class="btn" id="btnStart">START GAME</button>
@@ -207,7 +208,8 @@ const finalLevel = document.getElementById('finalLevel');
 
 // ── Game constants ──
 const GAME = {
-  playerSpeed: 5,
+  playerSpeed: 5,          // touch-swipe speed (px/frame)
+  keyboardSpeed: 3,        // desktop arrow-key speed (slower)
   bulletSpeed: 8,
   invaderBaseSpeed: 0.4,
   invaderDrop: 12,
@@ -315,8 +317,10 @@ let state = {
 };
 
 // ── Touch handling ──
+// Left half of screen: swipe to move. Right half: tap to shoot.
 let touches = {};
-let moveDir = 0;
+let touchMoveDir = 0;   // driven by left-side swipe
+let keyMoveDir = 0;     // driven by desktop arrow keys
 let shootRequested = false;
 
 // ── Audio context for retro sounds ──
@@ -359,7 +363,7 @@ let W, H, pixelSize;
 function resize() {
   W = canvas.width = window.innerWidth;
   H = canvas.height = window.innerHeight;
-  pixelSize = Math.max(3, Math.min(6, Math.floor(W / 80)));
+  pixelSize = Math.max(2, Math.min(6, Math.floor(W / 110)));  // zoomed out: room for full L-R sweep
   state.player.w = 8 * pixelSize;
   state.player.h = 8 * pixelSize;
   state.player.y = H - 60;
@@ -500,7 +504,7 @@ function layoutShields(fresh) {
   const gap = (W - n * archW) / (n + 1);
   state.shields = state.shieldGrids.map((grid, i) => ({
     x: gap + i * (archW + gap),
-    y: H - 60 - archH,   // bottom sits just above the player ship
+    y: H - 140 - archH,   // raised: bunker sits ~80px above the player ship
     block,
     grid,
   }));
@@ -610,9 +614,10 @@ function rectsOverlap(a, b) {
 function update() {
   if (!state.running) return;
 
-  // Player movement from touch
-  if (moveDir !== 0) {
-    state.player.x += moveDir * GAME.playerSpeed;
+  // Player movement: touch swipe (left half) or keyboard (desktop)
+  const dir = touchMoveDir !== 0 ? touchMoveDir : keyMoveDir;
+  if (dir !== 0) {
+    state.player.x += dir * (touchMoveDir !== 0 ? GAME.playerSpeed : GAME.keyboardSpeed);
   }
   state.player.x = Math.max(0, Math.min(W - state.player.w, state.player.x));
 
@@ -881,51 +886,61 @@ function gameOver() {
   gameOverScreen.classList.remove('hidden');
 }
 
-// ── Touch handling (multi-touch) ──
+// ── Touch handling (split halves) ──
+// Left half  → horizontal swipe moves the player
+// Right half → tap fires a bullet
+function touchSide(t) { return t.clientX < W / 2 ? 'left' : 'right'; }
+function leftTouchesActive() { return Object.values(touches).some(t => t.side === 'left'); }
+
 canvas.addEventListener('touchstart', (e) => {
   e.preventDefault();
   initAudio();
   for (const t of e.changedTouches) {
-    touches[t.identifier] = { x: t.clientX, y: t.clientY, startX: t.clientX, startY: t.clientY };
+    touches[t.identifier] = {
+      x: t.clientX, y: t.clientY,
+      startX: t.clientX, startY: t.clientY,
+      side: touchSide(t),
+    };
   }
-  // If single tap (no significant swipe), shoot
-  checkTap(e.changedTouches);
+  // Right-half taps shoot; left half is for swiping only
+  let shoot = false;
+  for (const t of e.changedTouches) {
+    if (touchSide(t) === 'right') { shoot = true; break; }
+  }
+  if (shoot) shootRequested = true;
 }, { passive: false });
 
 canvas.addEventListener('touchmove', (e) => {
   e.preventDefault();
-  moveDir = 0;
+  let dir = 0;
+  let leftActive = false;
   for (const t of e.changedTouches) {
     const touch = touches[t.identifier];
     if (!touch) continue;
+    touch.x = t.clientX;
+    touch.y = t.clientY;
+    if (touch.side !== 'left') continue;
+    leftActive = true;
     const dx = t.clientX - touch.startX;
-    const dy = t.clientY - touch.startY;
-    // Only horizontal swipes control movement
     if (Math.abs(dx) > 5) {
-      moveDir = dx > 0 ? 1 : -1;
+      dir = dx > 0 ? 1 : -1;
       touch.startX = t.clientX;
       touch.startY = t.clientY;
     }
-    touch.x = t.clientX;
-    touch.y = t.clientY;
   }
+  // Only update movement if a left-side finger actually moved this event
+  if (leftActive) touchMoveDir = dir;
 }, { passive: false });
 
-canvas.addEventListener('touchend', (e) => {
+function endTouch(e) {
   e.preventDefault();
   for (const t of e.changedTouches) {
     delete touches[t.identifier];
   }
-  // Reset move direction if no active touches
-  if (Object.keys(touches).length === 0) moveDir = 0;
-}, { passive: false });
-
-function checkTap(touchesList) {
-  for (const t of touchesList) {
-    // Tap = touch with minimal movement
-    shootRequested = true;
-  }
+  if (!leftTouchesActive()) touchMoveDir = 0;
 }
+canvas.addEventListener('touchend', endTouch, { passive: false });
+canvas.addEventListener('touchcancel', endTouch, { passive: false });
 
 // Keyboard fallback for desktop testing
 const keys = {};
@@ -968,9 +983,9 @@ gameLoop();
 // Keyboard movement (desktop) — poll held keys ~60fps
 setInterval(() => {
   if (!state.running) return;
-  if (keys['ArrowLeft'] || keys['a']) moveDir = -1;
-  else if (keys['ArrowRight'] || keys['d']) moveDir = 1;
-  else if (Object.keys(touches).length === 0) moveDir = 0;
+  if (keys['ArrowLeft'] || keys['a']) keyMoveDir = -1;
+  else if (keys['ArrowRight'] || keys['d']) keyMoveDir = 1;
+  else keyMoveDir = 0;
 }, 16);
 
 </script>
