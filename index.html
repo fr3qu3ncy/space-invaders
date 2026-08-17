@@ -208,8 +208,9 @@ const finalLevel = document.getElementById('finalLevel');
 
 // ── Game constants ──
 const GAME = {
-  playerSpeed: 5,          // touch-swipe speed (px/frame)
-  keyboardSpeed: 3,        // desktop arrow-key speed (slower)
+  touchSpeed: 15,          // touch-swipe speed (field px/frame)
+  keyboardMax: 8,          // desktop arrow-key top speed (field px/frame), with ease-in
+  keyboardEase: 0.15,      // per-frame ramp-up: light tap = nudge, held key = full speed
   bulletSpeed: 8,
   invaderBaseSpeed: 0.4,
   invaderDrop: 12,
@@ -321,6 +322,7 @@ let state = {
 let touches = {};
 let touchMoveDir = 0;   // driven by left-side swipe
 let keyMoveDir = 0;     // driven by desktop arrow keys
+let keyVel = 0;         // eased keyboard velocity (field px/frame)
 let shootRequested = false;
 
 // ── Audio context for retro sounds ──
@@ -358,15 +360,24 @@ function sfxLevelUp() {
   setTimeout(() => playSound(784, 0.15, 'square', 0.08), 200);
 }
 
-// ── Resize ──
-let W, H, pixelSize;
+// ── Fixed play field (1200 x 1000 logical px), scaled + centred ──
+// All game logic runs in FIELD units so the game feels identical on any screen.
+const FIELD_W = 1200, FIELD_H = 1000;
+const PIXEL = 8;   // logical sprite cell size — constant, screen-independent
+let W, H, scale = 1, ox = 0, oy = 0, dpr = 1;
 function resize() {
-  W = canvas.width = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-  pixelSize = Math.max(2, Math.min(6, Math.floor(W / 110)));  // zoomed out: room for full L-R sweep
-  state.player.w = 8 * pixelSize;
-  state.player.h = 8 * pixelSize;
-  state.player.y = H - 60;
+  dpr = window.devicePixelRatio || 1;
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  scale = Math.min(W / FIELD_W, H / FIELD_H);
+  ox = (W - FIELD_W * scale) / 2;
+  oy = (H - FIELD_H * scale) / 2;
+  state.player.w = 8 * PIXEL;
+  state.player.h = 8 * PIXEL;
+  state.player.y = FIELD_H - 88;   // sits just above the ground line (FIELD_H - 20)
+  if (state.stars.length) initStars();  // re-scatter stars for the new screen size
   layoutShields(false);
 }
 window.addEventListener('resize', resize);
@@ -403,7 +414,7 @@ function drawStars() {
 }
 
 // ── Sprite drawing ──
-function drawSprite(sprite, x, y, color, ps = pixelSize) {
+function drawSprite(sprite, x, y, color, ps = PIXEL) {
   ctx.fillStyle = color;
   for (let row = 0; row < sprite.length; row++) {
     for (let col = 0; col < sprite[row].length; col++) {
@@ -467,11 +478,11 @@ function setupLevel() {
   state.ufo = null;
   state.ufoTimer = 600 + Math.random() * 600;
 
-  const invaderW = 8 * pixelSize;
-  const invaderH = 8 * pixelSize;
-  const gap = Math.max(12, W * 0.025);
+  const invaderW = 8 * PIXEL;
+  const invaderH = 8 * PIXEL;
+  const gap = Math.max(12, FIELD_W * 0.025);
   const totalW = cols * (invaderW + gap);
-  const startX = (W - totalW) / 2 + 10;
+  const startX = (FIELD_W - totalW) / 2 + 10;
   const startY = 80;
 
   for (let r = 0; r < rows; r++) {
@@ -493,18 +504,19 @@ function setupLevel() {
 // Grids (with their damage) live in state.shieldGrids and persist across
 // levels and resizes; only a new game resets them.
 function layoutShields(fresh) {
-  const block = pixelSize * 2;
+  const block = PIXEL * 2;
   if (fresh || !state.shieldGrids || !state.shieldGrids.length) {
-    const n = W >= 600 ? 4 : 3;
+    const n = FIELD_W >= 600 ? 4 : 3;
     state.shieldGrids = Array.from({ length: n }, makeShieldGrid);
   }
+
   const n = state.shieldGrids.length;
   const archW = SHIELD_COLS * block;
   const archH = SHIELD_ROWS * block;
-  const gap = (W - n * archW) / (n + 1);
+  const gap = (FIELD_W - n * archW) / (n + 1);
   state.shields = state.shieldGrids.map((grid, i) => ({
     x: gap + i * (archW + gap),
-    y: H - 140 - archH,   // raised: bunker sits ~80px above the player ship
+    y: FIELD_H - 140 - archH,   // bunker sits well above the player ship
     block,
     grid,
   }));
@@ -561,13 +573,22 @@ function drawShields() {
   }
 }
 
-// Big life icons (player sprites) along the bottom-left, above the ground line
+// Small life icons (player sprites) top-centre, 2.5x the HUD text height,
+// sitting in the HUD row between SCORE and LEVEL (screen space, not field space)
 function drawLives() {
-  const ps = Math.round(pixelSize * 1.5);
-  const iconW = 8 * ps;
-  const y = H - 20 - iconW - 2;
-  for (let i = 0; i < Math.max(0, state.lives); i++) {
-    drawSprite(SPRITES.player, 12 + i * (iconW + 10), y, '#39ff14', ps);
+  const n = Math.max(0, state.lives);
+  if (!n) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  let fs = 10;
+  try { fs = parseFloat(getComputedStyle(hudScore).fontSize) || 10; } catch (e) {}
+  const iconPx = Math.max(16, Math.min(40, Math.round(fs * 2.5)));
+  const ps = iconPx / 8;
+  const gapPx = Math.round(iconPx * 0.5);
+  const totalW = n * iconPx + (n - 1) * gapPx;
+  const x0 = (W - totalW) / 2;
+  const y0 = 6;
+  for (let i = 0; i < n; i++) {
+    drawSprite(SPRITES.player, x0 + i * (iconPx + gapPx), y0, '#39ff14', ps);
   }
 }
 
@@ -577,7 +598,8 @@ function initGame() {
   state.level = 1;
   state.lives = GAME.lives;
   layoutShields(true);
-  state.player.x = W / 2 - state.player.w / 2;
+  state.player.x = FIELD_W / 2 - state.player.w / 2;
+  keyVel = 0;
   state.playerInvincible = 60;
   state.shootCooldown = 0;
   initStars();
@@ -614,12 +636,22 @@ function rectsOverlap(a, b) {
 function update() {
   if (!state.running) return;
 
-  // Player movement: touch swipe (left half) or keyboard (desktop)
-  const dir = touchMoveDir !== 0 ? touchMoveDir : keyMoveDir;
-  if (dir !== 0) {
-    state.player.x += dir * (touchMoveDir !== 0 ? GAME.playerSpeed : GAME.keyboardSpeed);
+  // Player movement: touch swipe (left half) is instant; keyboard eases in
+  let vx = 0;
+  if (touchMoveDir !== 0) {
+    vx = touchMoveDir * GAME.touchSpeed;
+    keyVel = 0;
+  } else if (keyMoveDir !== 0) {
+    // Subtle ramp-up: velocity eases toward max, so a light tap nudges
+    // and a held key reaches full speed. Release = instant stop.
+    keyVel += (keyMoveDir * GAME.keyboardMax - keyVel) * GAME.keyboardEase;
+    if (Math.abs(keyVel) < 0.01) keyVel = 0;
+    vx = keyVel;
+  } else {
+    keyVel = 0;
   }
-  state.player.x = Math.max(0, Math.min(W - state.player.w, state.player.x));
+  if (vx !== 0) state.player.x += vx;
+  state.player.x = Math.max(0, Math.min(FIELD_W - state.player.w, state.player.x));
 
   // Shooting
   if (state.shootCooldown > 0) state.shootCooldown--;
@@ -679,7 +711,7 @@ function update() {
   for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
     const b = state.enemyBullets[i];
     b.y += b.speed || 3;
-    if (b.y > H) { state.enemyBullets.splice(i, 1); continue; }
+    if (b.y > FIELD_H) { state.enemyBullets.splice(i, 1); continue; }
 
     // Check shield hits (destroys one block, bullet consumed)
     if (bulletHitsShield(b)) { state.enemyBullets.splice(i, 1); continue; }
@@ -726,7 +758,7 @@ function update() {
     for (const inv of aliveInvaders) {
       const ox = inv.x, oy = inv.y;
       inv.x += moveAmount;
-      if (inv.x <= 4 || inv.x + inv.w >= W - 4) needDrop = true;
+      if (inv.x <= 4 || inv.x + inv.w >= FIELD_W - 4) needDrop = true;
       if (invaderHitsShield(inv)) { inv.x = ox; inv.y = oy; }
     }
 
@@ -771,17 +803,17 @@ function update() {
   if (!state.ufo && state.ufoTimer <= 0) {
     const fromLeft = Math.random() > 0.5;
     state.ufo = {
-      x: fromLeft ? -40 : W + 10,
+      x: fromLeft ? -40 : FIELD_W + 10,
       y: 40,
-      w: 8 * pixelSize,
-      h: 6 * pixelSize,
+      w: 8 * PIXEL,
+      h: 6 * PIXEL,
       speed: fromLeft ? 2 : -2,
     };
     state.ufoTimer = 800 + Math.random() * 800;
   }
   if (state.ufo) {
     state.ufo.x += state.ufo.speed;
-    if (state.ufo.x < -60 || state.ufo.x > W + 20) state.ufo = null;
+    if (state.ufo.x < -60 || state.ufo.x > FIELD_W + 20) state.ufo = null;
     if (Math.random() < 0.1) sfxUfo();
   }
 
@@ -795,18 +827,28 @@ function update() {
 
 // ── Draw ──
 function draw() {
+  // Screen space: background + stars (dpr-aware so HiDPI phones stay sharp)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#0a0a0a';
   ctx.fillRect(0, 0, W, H);
+  drawStars();
+
+  // Play field: fixed 1200x1000, scaled to fit and centred on screen
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.scale(scale, scale);
 
   // Screen shake
-  ctx.save();
   if (state.shakeTimer > 0) {
     const sx = (Math.random() - 0.5) * state.shakeIntensity;
     const sy = (Math.random() - 0.5) * state.shakeIntensity;
     ctx.translate(sx, sy);
   }
 
-  drawStars();
+  // Subtle field border
+  ctx.strokeStyle = 'rgba(57,255,20,0.25)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, FIELD_W - 2, FIELD_H - 2);
 
   // Invaders
   for (const inv of state.invaders) {
@@ -852,18 +894,18 @@ function draw() {
     ctx.fillStyle = '#ff6ec7';
   }
 
-  drawParticles();
-  ctx.restore();
-
-  // Ground line
+  // Ground line (field space, so it stays anchored to the field on any screen)
   ctx.strokeStyle = 'rgba(57,255,20,0.3)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  ctx.moveTo(0, H - 20);
-  ctx.lineTo(W, H - 20);
+  ctx.moveTo(0, FIELD_H - 20);
+  ctx.lineTo(FIELD_W, FIELD_H - 20);
   ctx.stroke();
 
-  // Lives: big player sprites, bottom-left
+  drawParticles();
+  ctx.restore();
+
+  // Lives: small player sprites, top-centre of screen (in the HUD row)
   if (state.running) drawLives();
 }
 
