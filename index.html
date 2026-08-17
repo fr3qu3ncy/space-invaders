@@ -208,9 +208,9 @@ const finalLevel = document.getElementById('finalLevel');
 
 // ── Game constants ──
 const GAME = {
-  touchSpeed: 15,          // touch-swipe speed (field px/frame)
-  keyboardMax: 8,          // desktop arrow-key top speed (field px/frame), with ease-in
-  keyboardEase: 0.15,      // per-frame ramp-up: light tap = nudge, held key = full speed
+  touchSpeed: 15,          // touch-swipe speed (field px/frame, x dt)
+  keyboardMax: 12,         // desktop arrow-key top speed (field px/frame)
+  keyboardEase: 0.05,      // slow per-frame ramp: light tap = tiny nudge, held ~1s = full speed
   bulletSpeed: 8,
   invaderBaseSpeed: 0.4,
   invaderDrop: 12,
@@ -367,6 +367,7 @@ const PIXEL = 8;   // logical sprite cell size — constant, screen-independent
 let W, H, scale = 1, ox = 0, oy = 0, dpr = 1;
 function resize() {
   dpr = window.devicePixelRatio || 1;
+  dpr = Math.min(dpr, 2);  // cap backing store: 3x phones don't need it, and filling 3x pixels per frame is a real cost
   W = window.innerWidth;
   H = window.innerHeight;
   canvas.width = Math.round(W * dpr);
@@ -397,9 +398,9 @@ function initStars() {
   }
 }
 
-function updateStars() {
+function updateStars(dt) {
   for (const s of state.stars) {
-    s.y += s.speed;
+    s.y += s.speed * dt;
     s.brightness += (Math.random() - 0.5) * 0.05;
     s.brightness = Math.max(0.2, Math.min(1, s.brightness));
     if (s.y > H) { s.y = 0; s.x = Math.random() * W; }
@@ -414,19 +415,29 @@ function drawStars() {
 }
 
 // ── Sprite drawing ──
-function drawSprite(sprite, x, y, color, ps = PIXEL) {
-  ctx.fillStyle = color;
-  for (let row = 0; row < sprite.length; row++) {
-    for (let col = 0; col < sprite[row].length; col++) {
-      if (sprite[row][col] === '1') {
-        ctx.fillRect(
-          x + col * ps,
-          y + row * ps,
-          ps, ps
-        );
-      }
-    }
+// Sprites are pre-rendered ONCE into offscreen canvases (PIXEL is constant),
+// so every frame is a single GPU blit per sprite instead of ~40-64 fillRects.
+// This is the big mobile frame-rate win.
+const spriteCache = new Map();
+function getSpriteCanvas(sprite, color) {
+  let byColor = spriteCache.get(sprite);
+  if (!byColor) { byColor = new Map(); spriteCache.set(sprite, byColor); }
+  let c = byColor.get(color);
+  if (!c) {
+    const rows = sprite.length, cols = sprite[0].length;
+    c = document.createElement('canvas');
+    c.width = cols * PIXEL; c.height = rows * PIXEL;
+    const sctx = c.getContext('2d');
+    sctx.fillStyle = color;
+    for (let row = 0; row < rows; row++)
+      for (let col = 0; col < cols; col++)
+        if (sprite[row][col] === '1') sctx.fillRect(col * PIXEL, row * PIXEL, PIXEL, PIXEL);
+    byColor.set(color, c);
   }
+  return c;
+}
+function drawSprite(sprite, x, y, color, ps = PIXEL) {
+  ctx.drawImage(getSpriteCanvas(sprite, color), x, y, sprite[0].length * ps, sprite.length * ps);
 }
 
 // ── Particles ──
@@ -446,12 +457,12 @@ function spawnParticles(x, y, color, count = 12) {
   }
 }
 
-function updateParticles() {
+function updateParticles(dt) {
   for (let i = state.particles.length - 1; i >= 0; i--) {
     const p = state.particles[i];
-    p.x += p.vx;
-    p.y += p.vy;
-    p.life -= p.decay;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= p.decay * dt;
     if (p.life <= 0) state.particles.splice(i, 1);
   }
 }
@@ -633,18 +644,18 @@ function rectsOverlap(a, b) {
 }
 
 // ── Main update ──
-function update() {
+function update(dt) {
   if (!state.running) return;
 
   // Player movement: touch swipe (left half) is instant; keyboard eases in
   let vx = 0;
   if (touchMoveDir !== 0) {
-    vx = touchMoveDir * GAME.touchSpeed;
+    vx = touchMoveDir * GAME.touchSpeed * dt;
     keyVel = 0;
   } else if (keyMoveDir !== 0) {
     // Subtle ramp-up: velocity eases toward max, so a light tap nudges
     // and a held key reaches full speed. Release = instant stop.
-    keyVel += (keyMoveDir * GAME.keyboardMax - keyVel) * GAME.keyboardEase;
+    keyVel += (keyMoveDir * GAME.keyboardMax - keyVel) * Math.min(1, GAME.keyboardEase * dt);
     if (Math.abs(keyVel) < 0.01) keyVel = 0;
     vx = keyVel;
   } else {
@@ -654,7 +665,7 @@ function update() {
   state.player.x = Math.max(0, Math.min(FIELD_W - state.player.w, state.player.x));
 
   // Shooting
-  if (state.shootCooldown > 0) state.shootCooldown--;
+  if (state.shootCooldown > 0) state.shootCooldown -= dt;
   if (shootRequested && state.shootCooldown <= 0) {
     state.bullets.push({
       x: state.player.x + state.player.w / 2 - 2,
@@ -667,15 +678,15 @@ function update() {
   }
 
   // Player invincibility
-  if (state.playerInvincible > 0) state.playerInvincible--;
+  if (state.playerInvincible > 0) state.playerInvincible -= dt;
 
   // Screen shake
-  if (state.shakeTimer > 0) state.shakeTimer--;
+  if (state.shakeTimer > 0) state.shakeTimer -= dt;
 
   // Update bullets
   for (let i = state.bullets.length - 1; i >= 0; i--) {
     const b = state.bullets[i];
-    b.y -= GAME.bulletSpeed;
+    b.y -= GAME.bulletSpeed * dt;
     if (b.y + b.h < 0) { state.bullets.splice(i, 1); continue; }
 
     // Check shield hits (destroys one block, bullet consumed)
@@ -710,7 +721,7 @@ function update() {
   // Update enemy bullets
   for (let i = state.enemyBullets.length - 1; i >= 0; i--) {
     const b = state.enemyBullets[i];
-    b.y += b.speed || 3;
+    b.y += (b.speed || 3) * dt;
     if (b.y > FIELD_H) { state.enemyBullets.splice(i, 1); continue; }
 
     // Check shield hits (destroys one block, bullet consumed)
@@ -744,7 +755,7 @@ function update() {
 
   // Frame throttle: invaders only move every N frames
   const moveInterval = Math.max(4, 12 - state.level);
-  state.invaderMoveCounter++;
+  state.invaderMoveCounter += dt;
   if (state.invaderMoveCounter < moveInterval) {
     // Still update particles, UFO, etc. below
   } else {
@@ -792,14 +803,14 @@ function update() {
   }
 
   // Invader animation frame
-  state.invaderFrameTimer++;
+  state.invaderFrameTimer += dt;
   if (state.invaderFrameTimer > 30) {
     state.invaderFrame = (state.invaderFrame + 1) % 2;
     state.invaderFrameTimer = 0;
   }
 
   // UFO
-  state.ufoTimer--;
+  state.ufoTimer -= dt;
   if (!state.ufo && state.ufoTimer <= 0) {
     const fromLeft = Math.random() > 0.5;
     state.ufo = {
@@ -812,7 +823,7 @@ function update() {
     state.ufoTimer = 800 + Math.random() * 800;
   }
   if (state.ufo) {
-    state.ufo.x += state.ufo.speed;
+    state.ufo.x += state.ufo.speed * dt;
     if (state.ufo.x < -60 || state.ufo.x > FIELD_W + 20) state.ufo = null;
     if (Math.random() < 0.1) sfxUfo();
   }
@@ -821,8 +832,8 @@ function update() {
   hudScore.textContent = `SCORE: ${state.score}`;
   hudLevel.textContent = `LEVEL ${state.level}`;
 
-  updateParticles();
-  updateStars();
+  updateParticles(dt);
+  updateStars(dt);
 }
 
 // ── Draw ──
@@ -910,8 +921,17 @@ function draw() {
 }
 
 // ── Game loop ──
-function gameLoop() {
-  update();
+// Delta-time: every speed/timer above is scaled by dt (a 60fps frame = 1), so the
+// game runs at the same real-time speed even when the frame rate drops on mobile
+// instead of literally playing slower.
+let lastFrameT = 0;
+function gameLoop(t) {
+  t = t || performance.now();
+  let dt = lastFrameT ? (t - lastFrameT) / (1000 / 60) : 1;
+  lastFrameT = t;
+  if (dt > 3) dt = 3;  // cap: don't teleport entities after a tab switch / long hitch
+  if (dt < 0) dt = 0;
+  update(dt);
   draw();
   requestAnimationFrame(gameLoop);
 }
