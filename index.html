@@ -484,7 +484,7 @@ function setupLevel() {
   state.bullets = [];
   state.enemyBullets = [];
   state.invaderDir = 1;
-  state.invaderSpeed = GAME.invaderBaseSpeed + (state.level - 1) * 1.5;
+  state.invaderSpeed = GAME.invaderBaseSpeed + (state.level - 1) * 0.25; // gentle ramp: L1 ~45px/s, L10 ~165, L20 ~215
   state.invaderMoveCounter = 0;
   state.ufo = null;
   state.ufoTimer = 600 + Math.random() * 600;
