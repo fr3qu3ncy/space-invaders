@@ -212,7 +212,7 @@ const GAME = {
   keyboardMax: 12,         // desktop arrow-key top speed (field px/frame)
   keyboardEase: 0.05,      // slow per-frame ramp: light tap = tiny nudge, held ~1s = full speed
   bulletSpeed: 8,
-  invaderBaseSpeed: 0.4,
+  invaderBaseSpeed: 6,    // px per move tick; effective L1 speed = base/moveInterval ≈ 0.75px/frame
   invaderDrop: 12,
   invaderShootChance: 0.002,
   bulletHitRadius: 8,
@@ -484,7 +484,7 @@ function setupLevel() {
   state.bullets = [];
   state.enemyBullets = [];
   state.invaderDir = 1;
-  state.invaderSpeed = GAME.invaderBaseSpeed + (state.level - 1) * 0.08;
+  state.invaderSpeed = GAME.invaderBaseSpeed + (state.level - 1) * 1.5;
   state.invaderMoveCounter = 0;
   state.ufo = null;
   state.ufoTimer = 600 + Math.random() * 600;
@@ -754,7 +754,7 @@ function update(dt) {
   }
 
   // Frame throttle: invaders only move every N frames
-  const moveInterval = Math.max(4, 12 - state.level);
+  const moveInterval = Math.max(3, 9 - state.level);
   state.invaderMoveCounter += dt;
   if (state.invaderMoveCounter < moveInterval) {
     // Still update particles, UFO, etc. below
