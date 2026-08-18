@@ -124,6 +124,49 @@
   }
   .hud.hidden { display: none; }
 
+  /* Controls hint (game-start tutorial) */
+  .controls-hint {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1.5rem;
+    padding: 0.7em 1.3em;
+    background: var(--yellow);
+    color: #111;
+    border-radius: 3px;
+    opacity: 1;
+    transition: opacity 0.8s ease-out;
+    pointer-events: none;
+    white-space: nowrap;
+    font-family: var(--font);
+    box-shadow: 0 0 20px rgba(255,230,0,0.4);
+  }
+  .controls-hint.hidden { display: none; }
+  .controls-hint.fading { opacity: 0; }
+  .controls-hint .hint-mobile,
+  .controls-hint .hint-desktop { display: none; }
+  .controls-hint.mode-mobile .hint-mobile { display: flex; align-items: center; gap: 1.2rem; }
+  .controls-hint.mode-desktop .hint-desktop { display: flex; align-items: center; gap: 1.2rem; }
+  .hint-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5em;
+    font-size: clamp(0.45rem, 1.8vw, 0.7rem);
+  }
+  .hint-symbol {
+    font-size: 1.6em;
+    line-height: 1;
+  }
+  .hint-sep {
+    width: 1px;
+    height: 1.5em;
+    background: rgba(0,0,0,0.3);
+  }
+
   /* Scanline effect */
   .scanlines {
     position: absolute; top: 0; left: 0;
@@ -163,6 +206,20 @@
 
 <!-- Level announcement -->
 <div class="level-announce" id="levelAnnounce"></div>
+
+<!-- Controls hint (shown at game start) -->
+<div class="controls-hint hidden" id="controlsHint">
+  <div class="hint-mobile">
+    <span class="hint-item"><span class="hint-symbol">◄ ►</span> SWIPE TO MOVE</span>
+    <span class="hint-sep"></span>
+    <span class="hint-item"><span class="hint-symbol">●</span> TAP TO SHOOT</span>
+  </div>
+  <div class="hint-desktop">
+    <span class="hint-item"><span class="hint-symbol">◄ ►</span> ARROW KEYS</span>
+    <span class="hint-sep"></span>
+    <span class="hint-item"><span class="hint-symbol">[SPACE]</span> SHOOT</span>
+  </div>
+</div>
 
 <!-- MENU SCREEN -->
 <div class="overlay" id="menuScreen">
@@ -940,6 +997,8 @@ function gameLoop(t) {
 function gameOver() {
   state.running = false;
   hudEl.classList.add('hidden');
+  clearTimeout(hintTimer);
+  controlsHint.classList.add('hidden');
   sfxExplode();
   if (state.score > getHighScore()) setHighScore(state.score);
   updateHighScoreUI();
@@ -1014,12 +1073,46 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => { keys[e.key] = false; });
 
 // ── Button handlers ──
+const controlsHint = document.getElementById('controlsHint');
+let hintTimer = null;
+
+function showControlsHint() {
+  // Detect mode
+  const isTouch = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+  const isPortrait = window.innerHeight > window.innerWidth;
+  const mode = isTouch ? 'mobile' : 'desktop';
+  controlsHint.className = 'controls-hint mode-' + mode;
+
+  // Position: portrait mobile → below field; landscape mobile & desktop → centred
+  if (isTouch && isPortrait) {
+    const fieldBottom = oy + FIELD_H * scale;
+    controlsHint.style.top = Math.min(fieldBottom + 8, window.innerHeight - controlsHint.offsetHeight - 4) + 'px';
+    controlsHint.style.transform = 'translateX(-50%)';
+  } else {
+    controlsHint.style.top = '50%';
+    controlsHint.style.transform = 'translate(-50%, -50%)';
+  }
+
+  // Reset & show
+  controlsHint.classList.remove('hidden', 'fading');
+  // Force reflow so the transition fires if it was just un-hidden
+  void controlsHint.offsetWidth;
+
+  // 5s visible, then fade out over 0.8s
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => {
+    controlsHint.classList.add('fading');
+    setTimeout(() => controlsHint.classList.add('hidden'), 850);
+  }, 5000);
+}
+
 document.getElementById('btnStart').addEventListener('click', () => {
   initAudio();
   menuScreen.classList.add('hidden');
   hudEl.classList.remove('hidden');
   initGame();
   state.running = true;
+  showControlsHint();
 });
 
 document.getElementById('btnRestart').addEventListener('click', () => {
@@ -1027,6 +1120,7 @@ document.getElementById('btnRestart').addEventListener('click', () => {
   hudEl.classList.remove('hidden');
   initGame();
   state.running = true;
+  showControlsHint();
 });
 
 document.getElementById('btnMenu').addEventListener('click', () => {
@@ -1034,6 +1128,8 @@ document.getElementById('btnMenu').addEventListener('click', () => {
   menuScreen.classList.remove('hidden');
   hudEl.classList.add('hidden');
   state.running = false;
+  clearTimeout(hintTimer);
+  controlsHint.classList.add('hidden');
   updateHighScoreUI();
 });
 
