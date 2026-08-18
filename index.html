@@ -155,6 +155,22 @@
     align-items: center;
     gap: 0.35em;
   }
+  /* Mobile: full-width row — columns land on the centres of the left/right
+     halves (the actual swipe/tap zones), boxed to show which side is which */
+  .controls-hint.mode-mobile {
+    left: 0;
+    width: 100%;
+    transform: none;
+    gap: 0;
+    padding: 0;
+  }
+  .controls-hint.mode-mobile .hint-mobile {
+    flex: 1 1 0;
+    border: 2px solid rgba(255,230,0,0.6);
+    border-radius: 10px;
+    padding: 0.45em 0.8em;
+    margin: 0 10px;
+  }
   .hint-word {
     font-size: clamp(0.5rem, 2vw, 0.75rem);
     font-weight: 700;
@@ -1098,14 +1114,27 @@ function showControlsHint() {
   const mode = isTouch ? 'mobile' : 'desktop';
   controlsHint.className = 'controls-hint mode-' + mode;
 
-  // Position: portrait mobile → below field; landscape mobile & desktop → centred
-  if (isTouch && isPortrait) {
-    const fieldBottom = oy + FIELD_H * scale;
-    controlsHint.style.top = Math.min(fieldBottom + 8, window.innerHeight - controlsHint.offsetHeight - 4) + 'px';
-    controlsHint.style.transform = 'translateX(-50%)';
+  // Reset inline positioning
+  controlsHint.style.top = '';
+  controlsHint.style.transform = '';
+
+  if (mode === 'mobile') {
+    // Full-width row; the two columns sit at the centres of the left/right
+    // halves — exactly where swipe (left) and tap (right) happen.
+    if (isPortrait) {
+      const fieldBottom = oy + FIELD_H * scale;
+      controlsHint.style.top = Math.min(fieldBottom + 8, window.innerHeight - controlsHint.offsetHeight - 4) + 'px';
+    } else {
+      controlsHint.style.top = '50%';
+      controlsHint.style.transform = 'translateY(-50%)';
+    }
   } else {
-    controlsHint.style.top = '50%';
-    controlsHint.style.transform = 'translate(-50%, -50%)';
+    // Desktop: between the field centre (level announcement) and the shields
+    const fieldCentreY = FIELD_H / 2;
+    const shieldTopY = FIELD_H - 140 - SHIELD_ROWS * PIXEL * 2;
+    const midY = oy + ((fieldCentreY + shieldTopY) / 2) * scale;
+    controlsHint.style.top = (midY - controlsHint.offsetHeight / 2) + 'px';
+    controlsHint.style.transform = 'translateX(-50%)';
   }
 
   // Reset & show
