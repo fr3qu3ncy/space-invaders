@@ -133,38 +133,43 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 1.5rem;
-    padding: 0.7em 1.3em;
-    background: var(--yellow);
-    color: #111;
-    border-radius: 3px;
+    gap: 1.8rem;
+    padding: 0.4em 1em;
+    background: transparent;
+    color: var(--yellow);
+    text-shadow: 0 1px 5px rgba(0,0,0,0.85);
     opacity: 1;
     transition: opacity 0.8s ease-out;
     pointer-events: none;
     white-space: nowrap;
     font-family: var(--font);
-    box-shadow: 0 0 20px rgba(255,230,0,0.4);
   }
   .controls-hint.hidden { display: none; }
   .controls-hint.fading { opacity: 0; }
   .controls-hint .hint-mobile,
   .controls-hint .hint-desktop { display: none; }
-  .controls-hint.mode-mobile .hint-mobile { display: flex; align-items: center; gap: 1.2rem; }
-  .controls-hint.mode-desktop .hint-desktop { display: flex; align-items: center; gap: 1.2rem; }
-  .hint-item {
+  .controls-hint.mode-mobile .hint-mobile,
+  .controls-hint.mode-desktop .hint-desktop {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 0.5em;
-    font-size: clamp(0.45rem, 1.8vw, 0.7rem);
+    gap: 0.35em;
+  }
+  .hint-word {
+    font-size: clamp(0.5rem, 2vw, 0.75rem);
+    font-weight: 700;
+    letter-spacing: 0.18em;
   }
   .hint-symbol {
-    font-size: 1.6em;
+    font-size: clamp(1.7rem, 6vw, 2.5rem);
     line-height: 1;
   }
-  .hint-sep {
-    width: 1px;
-    height: 1.5em;
-    background: rgba(0,0,0,0.3);
+  .hint-spacebar {
+    width: 2.8em;
+    height: 1.1em;
+    border: 2px solid var(--yellow);
+    border-radius: 0.3em;
+    box-sizing: border-box;
   }
 
   /* Scanline effect */
@@ -210,14 +215,24 @@
 <!-- Controls hint (shown at game start) -->
 <div class="controls-hint hidden" id="controlsHint">
   <div class="hint-mobile">
-    <span class="hint-item"><span class="hint-symbol">◄ ►</span> SWIPE TO MOVE</span>
-    <span class="hint-sep"></span>
-    <span class="hint-item"><span class="hint-symbol">●</span> TAP TO SHOOT</span>
+    <span class="hint-word">SWIPE</span>
+    <span class="hint-symbol">◄ ►</span>
+    <span class="hint-word">MOVE</span>
+  </div>
+  <div class="hint-mobile">
+    <span class="hint-word">TAP</span>
+    <span class="hint-symbol">●</span>
+    <span class="hint-word">SHOOT</span>
   </div>
   <div class="hint-desktop">
-    <span class="hint-item"><span class="hint-symbol">◄ ►</span> ARROW KEYS</span>
-    <span class="hint-sep"></span>
-    <span class="hint-item"><span class="hint-symbol">[SPACE]</span> SHOOT</span>
+    <span class="hint-word">ARROW KEYS</span>
+    <span class="hint-symbol">◄ ►</span>
+    <span class="hint-word">MOVE</span>
+  </div>
+  <div class="hint-desktop">
+    <span class="hint-word">SPACE BAR</span>
+    <span class="hint-symbol hint-spacebar"></span>
+    <span class="hint-word">SHOOT</span>
   </div>
 </div>
 
