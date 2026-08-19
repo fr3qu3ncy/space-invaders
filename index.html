@@ -365,17 +365,15 @@ const INVADER_COLORS = ['#ff6ec7', '#00ffff', '#ffe600'];
 const INVADER_POINTS = [30, 20, 10];
 
 // ── Shield bunker shape (classic arch) ──
-// 11 x 8 grid; bottom-centre notch = the arch opening
-const SHIELD_COLS = 11, SHIELD_ROWS = 8;
+// 9 x 6 grid; bottom-centre notch = the arch opening
+const SHIELD_COLS = 9, SHIELD_ROWS = 6;
 const SHIELD_TEMPLATE = [
-  '00111111100',
-  '01111111110',
-  '11111111111',
-  '11111111111',
-  '11111111111',
-  '11000000011',
-  '11000000011',
-  '11000000011',
+  '001111100',
+  '011111110',
+  '111111111',
+  '111111111',
+  '110000011',
+  '110000011',
 ];
 function makeShieldGrid() {
   return SHIELD_TEMPLATE.map(row => row.split('').map(ch => (ch === '1' ? 1 : 0)));
